@@ -1,3 +1,4 @@
+// nt_client/src/subscribe.rs
 //! Subscriber portion of the `NetworkTables` spec.
 //!
 //! Subscribers receive data value updates to a topic.
@@ -17,7 +18,7 @@
 //!     let mut subscriber = counter_topic.subscribe(Default::default()).await;
 //!
 //!     loop {
-//!         match subscriber.recv().await {
+//!         match subscriber.recv_buffered().await {
 //!             Ok(ReceivedMessage::Updated((_topic, value))) => {
 //!                 // get the updated value as an `i32`
 //!                 let number = i32::from_value(&value).unwrap();
@@ -38,7 +39,7 @@
 //! # });
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     sync::Arc,
 };
@@ -71,6 +72,7 @@ pub struct Subscriber {
     options: SubscriptionOptions,
     topic_ids: Arc<RwLock<HashSet<i32>>>,
     announced_topics: Arc<RwLock<AnnouncedTopics>>,
+    buffered_messages: VecDeque<ReceivedMessage>,
 
     ws_sender: NTServerSender,
     ws_recv: NTClientReceiver,
@@ -131,6 +133,7 @@ impl Subscriber {
             options,
             topic_ids: Arc::new(RwLock::new(topic_ids)),
             announced_topics,
+            buffered_messages: VecDeque::new(),
             ws_sender,
             ws_recv,
         }
@@ -157,12 +160,90 @@ impl Subscriber {
         join_all(mapped_futures).await.into_iter().collect()
     }
 
-    /// Receives the next value for this subscriber.
+    /// Receives the next value for this subscriber, buffering all messages.
+    ///
+    /// This method ensures that no messages are dropped, buffering them internally
+    /// to guarantee ordered delivery of all updates. It cannot produce a 'lagged' error
+    /// unlike the broadcast channel's direct recv method.
     ///
     /// Topics that have already been announced will not be received by this method. To view
     /// all topics that are being subscribed to, use the [`topics`][`Self::topics`] method.
-    // TODO: probably replace with custom error type
-    pub async fn recv(&mut self) -> Result<ReceivedMessage, broadcast::error::RecvError> {
+    pub async fn recv_buffered(&mut self) -> Result<ReceivedMessage, broadcast::error::RecvError> {
+        // Return a buffered message if available
+        if let Some(message) = self.buffered_messages.pop_front() {
+            return Ok(message);
+        }
+
+        // Otherwise, process new messages
+        self.process_next_message().await
+    }
+
+    /// Receives only the most recent updates for each topic, discarding older updates.
+    ///
+    /// Unlike `recv_buffered` which returns all messages in order, this method will:
+    ///
+    /// 1. Process all pending messages
+    /// 2. For each topic that has multiple value updates, keep ONLY the most recent one
+    /// 3. Preserve all non-update messages (like announcements and property changes)
+    /// 4. Return the first message in the resulting queue
+    ///
+    /// This is ideal for real-time applications where you only need the current value
+    /// of each topic and want to avoid processing outdated information.
+    ///
+    /// Topics that have already been announced will not be received by this method. To view
+    /// all topics that are being subscribed to, use the [`topics`][`Self::topics`] method.
+    pub async fn recv_latest(&mut self) -> Result<ReceivedMessage, broadcast::error::RecvError> {
+        // First, buffer any available messages
+        while let Ok(msg) = self.process_next_message().await {
+            self.buffered_messages.push_back(msg);
+        }
+
+        // If we have multiple updates for the same topic, keep only the latest
+        let mut latest_updates: HashMap<i32, ReceivedMessage> = HashMap::new();
+        let mut other_messages = VecDeque::new();
+
+        for message in self.buffered_messages.drain(..) {
+            match &message {
+                ReceivedMessage::Updated((topic, _)) => {
+                    // Store the topic ID with the whole message
+                    let topic_id = topic.id();
+
+                    // If this topic already has an update, check if this one is newer
+                    if let Some(existing) = latest_updates.get(&topic_id) {
+                        if let ReceivedMessage::Updated((existing_topic, _)) = existing {
+                            // Only replace if this update is newer
+                            if topic.last_updated() > existing_topic.last_updated() {
+                                latest_updates.insert(topic_id, message);
+                            }
+                        }
+                    } else {
+                        // First update for this topic
+                        latest_updates.insert(topic_id, message);
+                    }
+                },
+                _ => other_messages.push_back(message),
+            }
+        }
+
+        // Re-add all non-update messages
+        self.buffered_messages = other_messages;
+
+        // Add all latest updates back to the queue
+        for (_, message) in latest_updates {
+            self.buffered_messages.push_back(message);
+        }
+
+        // Return the next message, if any
+        if let Some(message) = self.buffered_messages.pop_front() {
+            Ok(message)
+        } else {
+            // If no messages in buffer, get the next one
+            self.process_next_message().await
+        }
+    }
+
+    /// Internal helper method to process the next incoming message
+    async fn process_next_message(&mut self) -> Result<ReceivedMessage, broadcast::error::RecvError> {
         recv_until_async(&mut self.ws_recv, |data| {
             let topic_ids = self.topic_ids.clone();
             let announced_topics = self.announced_topics.clone();
