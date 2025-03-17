@@ -6,7 +6,11 @@ use nt_client::{subscribe::ReceivedMessage, Client};
 async fn main() {
     let client = Client::new(Default::default());
 
-    let topic_names = vec!["/topic1".to_owned(), "/topic2".to_owned(), "topic3".to_owned()];
+    let topic_names = vec![
+        "/topic1".to_owned(),
+        "/topic2".to_owned(),
+        "topic3".to_owned(),
+    ];
     let topics = client.topics(topic_names.clone());
 
     // loop over topics in the collection
@@ -22,13 +26,14 @@ async fn main() {
 
         loop {
             match sub.recv().await {
-                Ok(ReceivedMessage::Updated((topic, value))) => println!("topic {} updated to {value:?}", topic.name()),
+                Ok(ReceivedMessage::Updated((topic, value))) => {
+                    println!("topic {} updated to {value:?}", topic.name())
+                }
                 Err(_) => break,
-                _ => {},
+                _ => {}
             }
         }
     });
 
     client.connect().await.unwrap();
 }
-

@@ -273,13 +273,15 @@ impl_data_type!(rmpv::Value => Msgpack; value @ Some(value.clone()));
 impl_data_type!(bytes Protobuf => Protobuf);
 
 pub(super) fn serialize_as_u32<S>(data_type: &DataType, serializer: S) -> Result<S::Ok, S::Error>
-where S: Serializer
+where
+    S: Serializer,
 {
     serializer.serialize_u32(data_type.as_id())
 }
 
 pub(super) fn deserialize_u32<'de, D>(deserializer: D) -> Result<DataType, D::Error>
-where D: Deserializer<'de>
+where
+    D: Deserializer<'de>,
 {
     deserializer.deserialize_u32(DataTypeVisitor)
 }
@@ -294,15 +296,17 @@ impl<'de> Visitor<'de> for DataTypeVisitor {
     }
 
     fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
-    where E: serde::de::Error
+    where
+        E: serde::de::Error,
     {
         self.visit_u64(v.try_into().map_err(E::custom)?)
     }
 
     fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
-    where E: serde::de::Error
+    where
+        E: serde::de::Error,
     {
-        DataType::from_id(v.try_into().map_err(E::custom)?).ok_or(E::custom(format!("{v} is not a valid type id")))
+        DataType::from_id(v.try_into().map_err(E::custom)?)
+            .ok_or(E::custom(format!("{v} is not a valid type id")))
     }
 }
-

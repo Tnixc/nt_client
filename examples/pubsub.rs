@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use nt_client::{data::r#type::NetworkTableData, subscribe::ReceivedMessage, Client, NTAddr, NewClientOptions};
+use nt_client::{
+    data::r#type::NetworkTableData, subscribe::ReceivedMessage, Client, NTAddr, NewClientOptions,
+};
 use tracing::level_filters::LevelFilter;
 
 #[tokio::main]
@@ -11,7 +13,7 @@ async fn main() {
         .with_max_level(LevelFilter::INFO)
         .init();
 
-    let client = Client::new(NewClientOptions { 
+    let client = Client::new(NewClientOptions {
         addr: NTAddr::Local,
         // custom WSL ip
         // addr: NTAddr::Custom(Ipv4Addr::new(172, 30, 64, 1)),
@@ -26,21 +28,27 @@ async fn main() {
 
         loop {
             match subscriber.recv().await {
-                Ok(ReceivedMessage::Announced(topic)) => println!("announced topic: {}", topic.name()),
+                Ok(ReceivedMessage::Announced(topic)) => {
+                    println!("announced topic: {}", topic.name())
+                }
                 Ok(ReceivedMessage::Updated((topic, value))) => {
                     let value = String::from_value(&value).expect("updated value is a string");
                     println!("topic {} updated to {value}", topic.name());
-                },
+                }
                 Ok(ReceivedMessage::Unannounced { name, .. }) => {
                     println!("topic {name} unannounced");
-                },
+                }
                 Ok(ReceivedMessage::UpdateProperties(topic)) => {
-                    println!("topic {} updated its properties to {:?}", topic.name(), topic.properties());
+                    println!(
+                        "topic {} updated its properties to {:?}",
+                        topic.name(),
+                        topic.properties()
+                    );
                 }
                 Err(err) => {
                     eprint!("{err:?}");
                     break;
-                },
+                }
             }
         }
     });
@@ -48,20 +56,28 @@ async fn main() {
     // publishes to `/counter` and increments its value by 1 every second
     let pub_topic = client.topic("/counter");
     tokio::spawn(async move {
-        let publisher = pub_topic.publish::<u32>(Default::default()).await.expect("can publish to topic");
+        let publisher = pub_topic
+            .publish::<u32>(Default::default())
+            .await
+            .expect("can publish to topic");
         let mut counter = 0;
 
-        publisher.set_default(counter).await.expect("connection is still alive");
+        publisher
+            .set_default(counter)
+            .await
+            .expect("connection is still alive");
 
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
             counter += 1;
 
             println!("updated counter to {counter}");
-            publisher.set(counter).await.expect("connection is still alive");
+            publisher
+                .set(counter)
+                .await
+                .expect("connection is still alive");
         }
     });
 
     client.connect().await.unwrap();
 }
-

@@ -37,13 +37,25 @@
 //! client.connect().await.unwrap();
 //! # });
 
-use std::{collections::{HashMap, HashSet}, fmt::Debug, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    sync::Arc,
+};
 
 use futures_util::future::join_all;
 use tokio::sync::{broadcast, RwLock};
 use tracing::debug;
 
-use crate::{data::{BinaryData, ClientboundData, ClientboundTextData, PropertiesData, ServerboundMessage, ServerboundTextData, Subscribe, SubscriptionOptions, Unsubscribe}, recv_until_async, topic::{AnnouncedTopic, AnnouncedTopics}, NTClientReceiver, NTServerSender};
+use crate::{
+    data::{
+        BinaryData, ClientboundData, ClientboundTextData, PropertiesData, ServerboundMessage,
+        ServerboundTextData, Subscribe, SubscriptionOptions, Unsubscribe,
+    },
+    recv_until_async,
+    topic::{AnnouncedTopic, AnnouncedTopics},
+    NTClientReceiver, NTServerSender,
+};
 
 /// A `NetworkTables` subscriber that subscribes to a [`Topic`].
 ///
@@ -81,7 +93,7 @@ impl PartialEq for Subscriber {
     }
 }
 
-impl Eq for Subscriber { }
+impl Eq for Subscriber {}
 
 impl Subscriber {
     pub(super) async fn new(
@@ -97,14 +109,21 @@ impl Subscriber {
 
         let topic_ids = {
             let announced_topics = announced_topics.read().await;
-            announced_topics.id_values()
+            announced_topics
+                .id_values()
                 .filter(|topic| topic.matches(&topics, &options))
                 .map(|topic| topic.id())
                 .collect()
         };
 
-        let sub_message = ServerboundTextData::Subscribe(Subscribe { topics: topics.clone(), subuid: id, options: options.clone() });
-        ws_sender.send(ServerboundMessage::Text(sub_message).into()).expect("receivers exist");
+        let sub_message = ServerboundTextData::Subscribe(Subscribe {
+            topics: topics.clone(),
+            subuid: id,
+            options: options.clone(),
+        });
+        ws_sender
+            .send(ServerboundMessage::Text(sub_message).into())
+            .expect("receivers exist");
 
         Self {
             topics,
@@ -113,7 +132,7 @@ impl Subscriber {
             topic_ids: Arc::new(RwLock::new(topic_ids)),
             announced_topics,
             ws_sender,
-            ws_recv
+            ws_recv,
         }
     }
 
@@ -121,13 +140,20 @@ impl Subscriber {
     pub async fn topics(&self) -> HashMap<i32, AnnouncedTopic> {
         let topic_ids = self.topic_ids.clone();
         let topic_ids = topic_ids.read().await;
-        let mapped_futures = topic_ids.iter()
-            .map(|id| {
-                let announced_topics = self.announced_topics.clone();
-                async move {
-                    (*id, announced_topics.read().await.get_from_id(*id).expect("topic exists").clone())
-                }
-            });
+        let mapped_futures = topic_ids.iter().map(|id| {
+            let announced_topics = self.announced_topics.clone();
+            async move {
+                (
+                    *id,
+                    announced_topics
+                        .read()
+                        .await
+                        .get_from_id(*id)
+                        .expect("topic exists")
+                        .clone(),
+                )
+            }
+        });
         join_all(mapped_futures).await.into_iter().collect()
     }
 
@@ -145,49 +171,80 @@ impl Subscriber {
             let options = &self.options;
             async move {
                 match *data {
-                    ClientboundData::Binary(BinaryData { id, ref timestamp, ref data, .. }) => {
-                        let contains = {
-                            topic_ids.read().await.contains(&id)
+                    ClientboundData::Binary(BinaryData {
+                        id,
+                        ref timestamp,
+                        ref data,
+                        ..
+                    }) => {
+                        let contains = { topic_ids.read().await.contains(&id) };
+                        if !contains {
+                            return None;
                         };
-                        if !contains { return None; };
                         let announced_topic = {
                             let mut topics = announced_topics.write().await;
-                            let topic = topics.get_mut_from_id(id).expect("announced topic before sending updates");
+                            let topic = topics
+                                .get_mut_from_id(id)
+                                .expect("announced topic before sending updates");
 
-                            if topic.last_updated().is_some_and(|last_timestamp| last_timestamp > timestamp) { return None; };
+                            if topic
+                                .last_updated()
+                                .is_some_and(|last_timestamp| last_timestamp > timestamp)
+                            {
+                                return None;
+                            };
                             topic.update(*timestamp);
 
                             topic.clone()
                         };
                         debug!("[sub {}] updated: {data}", sub_id);
                         Some(ReceivedMessage::Updated((announced_topic, data.clone())))
-                    },
+                    }
                     ClientboundData::Text(ClientboundTextData::Announce(ref announce)) => {
-                        let matches = announced_topics.read().await.get_from_id(announce.id).is_some_and(|topic| topic.matches(topics, options));
+                        let matches = announced_topics
+                            .read()
+                            .await
+                            .get_from_id(announce.id)
+                            .is_some_and(|topic| topic.matches(topics, options));
                         if matches {
                             topic_ids.write().await.insert(announce.id);
                             Some(ReceivedMessage::Announced(announce.into()))
-                        } else { None }
-                    },
+                        } else {
+                            None
+                        }
+                    }
                     ClientboundData::Text(ClientboundTextData::Unannounce(ref unannounce)) => {
                         topic_ids.write().await.remove(&unannounce.id).then(|| {
-                            ReceivedMessage::Unannounced { name: unannounce.name.clone(), id: unannounce.id }
+                            ReceivedMessage::Unannounced {
+                                name: unannounce.name.clone(),
+                                id: unannounce.id,
+                            }
                         })
-                    },
-                    ClientboundData::Text(ClientboundTextData::Properties(PropertiesData { ref name, .. })) => {
+                    }
+                    ClientboundData::Text(ClientboundTextData::Properties(PropertiesData {
+                        ref name,
+                        ..
+                    })) => {
                         let (contains, id) = {
-                            let id = announced_topics.read().await.get_id(name).expect("announced before properties");
+                            let id = announced_topics
+                                .read()
+                                .await
+                                .get_id(name)
+                                .expect("announced before properties");
                             (topic_ids.read().await.contains(&id), id)
                         };
-                        if !contains { return None; };
+                        if !contains {
+                            return None;
+                        };
 
                         let topics = announced_topics.read().await;
                         let topic = topics.get_from_id(id).expect("topic exists").clone();
                         Some(ReceivedMessage::UpdateProperties(topic))
-                    },
+                    }
                 }
             }
-        }).await
+        })
+        .await
     }
 }
 
@@ -195,7 +252,9 @@ impl Drop for Subscriber {
     fn drop(&mut self) {
         let unsub_message = ServerboundTextData::Unsubscribe(Unsubscribe { subuid: self.id });
         // if the receiver is dropped, the ws connection is closed
-        let _ = self.ws_sender.send(ServerboundMessage::Text(unsub_message).into());
+        let _ = self
+            .ws_sender
+            .send(ServerboundMessage::Text(unsub_message).into());
         debug!("[sub {}] unsubscribed", self.id);
     }
 }
@@ -222,4 +281,3 @@ pub enum ReceivedMessage {
         id: i32,
     },
 }
-

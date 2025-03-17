@@ -18,7 +18,14 @@ async fn main() {
         // - cached: true
         // - custom: `something`
         // everything else is unset
-        let mut publisher = topic.publish::<String>(Properties { cached: Some(true), extra: extra_props, ..Default::default() }).await.unwrap();
+        let mut publisher = topic
+            .publish::<String>(Properties {
+                cached: Some(true),
+                extra: extra_props,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
 
         // after 1 second...
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -37,4 +44,3 @@ async fn main() {
 
     client.connect().await.unwrap()
 }
-

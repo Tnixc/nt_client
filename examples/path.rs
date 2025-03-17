@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use nt_client::{data::SubscriptionOptions, path, subscribe::ReceivedMessage, topic::TopicPath, Client};
+use nt_client::{
+    data::SubscriptionOptions, path, subscribe::ReceivedMessage, topic::TopicPath, Client,
+};
 
 #[tokio::main]
 async fn main() {
@@ -15,13 +17,22 @@ async fn main() {
     // task that subscribes to that topic
     tokio::spawn(async move {
         // subscribes to that topic and only record topic announcements that have that prefix
-        let mut subscriber = sub_topic.subscribe(SubscriptionOptions { topics_only: Some(true), prefix: Some(true), ..Default::default() }).await;
+        let mut subscriber = sub_topic
+            .subscribe(SubscriptionOptions {
+                topics_only: Some(true),
+                prefix: Some(true),
+                ..Default::default()
+            })
+            .await;
 
         while let Ok(ReceivedMessage::Announced(topic)) = subscriber.recv().await {
             // turn the topic name into a TopicPath
             let path: TopicPath = topic.name().into();
             // print the last segment in the path
-            println!("topic announced, last segment is: {:?}", path.segments.back());
+            println!(
+                "topic announced, last segment is: {:?}",
+                path.segments.back()
+            );
         }
     });
 
@@ -45,4 +56,3 @@ async fn main() {
 
     client.connect().await.unwrap()
 }
-

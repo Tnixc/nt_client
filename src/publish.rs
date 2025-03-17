@@ -36,7 +36,15 @@ use std::{collections::HashMap, fmt::Debug, marker::PhantomData, sync::Arc, time
 use tokio::sync::{broadcast, RwLock};
 use tracing::debug;
 
-use crate::{data::{r#type::{DataType, NetworkTableData}, Announce, BinaryData, ClientboundData, ClientboundTextData, Properties, PropertiesData, Publish, ServerboundMessage, ServerboundTextData, SetProperties, Unpublish}, error::ConnectionClosedError, recv_until, NTClientReceiver, NTServerSender, NetworkTablesTime};
+use crate::{
+    data::{
+        r#type::{DataType, NetworkTableData},
+        Announce, BinaryData, ClientboundData, ClientboundTextData, Properties, PropertiesData,
+        Publish, ServerboundMessage, ServerboundTextData, SetProperties, Unpublish,
+    },
+    error::ConnectionClosedError,
+    recv_until, NTClientReceiver, NTServerSender, NetworkTablesTime,
+};
 
 /// A `NetworkTables` publisher that publishes values to a [`Topic`].
 ///
@@ -67,7 +75,7 @@ impl<T: NetworkTableData> PartialEq for Publisher<T> {
     }
 }
 
-impl<T: NetworkTableData> Eq for Publisher<T> { }
+impl<T: NetworkTableData> Eq for Publisher<T> {}
 
 impl<T: NetworkTableData> Publisher<T> {
     pub(super) async fn new(
@@ -78,24 +86,50 @@ impl<T: NetworkTableData> Publisher<T> {
         mut ws_recv: NTClientReceiver,
     ) -> Result<Self, NewPublisherError> {
         let id = rand::random();
-        let pub_message = ServerboundTextData::Publish(Publish { name, pubuid: id, r#type: T::data_type(), properties });
-        ws_sender.send(ServerboundMessage::Text(pub_message).into()).map_err(|_| broadcast::error::RecvError::Closed)?;
+        let pub_message = ServerboundTextData::Publish(Publish {
+            name,
+            pubuid: id,
+            r#type: T::data_type(),
+            properties,
+        });
+        ws_sender
+            .send(ServerboundMessage::Text(pub_message).into())
+            .map_err(|_| broadcast::error::RecvError::Closed)?;
 
         let (name, r#type, id) = {
             recv_until(&mut ws_recv, |data| {
-                if let ClientboundData::Text(ClientboundTextData::Announce(Announce { ref name, ref r#type, pubuid: Some(pubuid), .. })) = *data {
+                if let ClientboundData::Text(ClientboundTextData::Announce(Announce {
+                    ref name,
+                    ref r#type,
+                    pubuid: Some(pubuid),
+                    ..
+                })) = *data
+                {
                     // TODO: cached property
 
                     Some((name.clone(), r#type.clone(), pubuid))
                 } else {
                     None
                 }
-            }).await
+            })
+            .await
         }?;
-        if T::data_type() != r#type { return Err(NewPublisherError::MismatchedType { server: r#type, client: T::data_type() }); };
+        if T::data_type() != r#type {
+            return Err(NewPublisherError::MismatchedType {
+                server: r#type,
+                client: T::data_type(),
+            });
+        };
 
         debug!("[pub {id}] publishing to topic `{name}`");
-        Ok(Self { _phantom: PhantomData, topic: name, id, time, ws_sender, ws_recv })
+        Ok(Self {
+            _phantom: PhantomData,
+            topic: name,
+            id,
+            time,
+            ws_sender,
+            ws_recv,
+        })
     }
 
     /// Publish a new value to the [`Topic`].
@@ -154,21 +188,36 @@ impl<T: NetworkTableData> Publisher<T> {
     /// # })
     /// ```
     // TODO: probably replace with custom error
-    pub async fn update_props(&mut self, new_props: UpdateProps) -> Result<(), broadcast::error::RecvError> {
-        self.ws_sender.send(ServerboundMessage::Text(ServerboundTextData::SetProperties(SetProperties {
-            name: self.topic.clone(),
-            update: new_props.into(),
-        })).into()).map_err(|_| broadcast::error::RecvError::Closed)?;
+    pub async fn update_props(
+        &mut self,
+        new_props: UpdateProps,
+    ) -> Result<(), broadcast::error::RecvError> {
+        self.ws_sender
+            .send(
+                ServerboundMessage::Text(ServerboundTextData::SetProperties(SetProperties {
+                    name: self.topic.clone(),
+                    update: new_props.into(),
+                }))
+                .into(),
+            )
+            .map_err(|_| broadcast::error::RecvError::Closed)?;
 
         recv_until(&mut self.ws_recv, |data| {
-            if let ClientboundData::Text(ClientboundTextData::Properties(PropertiesData { ref name, .. })) = *data {
-                if name != &self.topic { return None; };
+            if let ClientboundData::Text(ClientboundTextData::Properties(PropertiesData {
+                ref name,
+                ..
+            })) = *data
+            {
+                if name != &self.topic {
+                    return None;
+                };
 
                 Some(())
             } else {
                 None
             }
-        }).await?;
+        })
+        .await?;
 
         Ok(())
     }
@@ -176,8 +225,13 @@ impl<T: NetworkTableData> Publisher<T> {
     async fn set_time(&self, data: T, timestamp: Duration) -> Result<(), ConnectionClosedError> {
         let data_value = data.clone().into_value();
         let binary = BinaryData::new(self.id, timestamp, data);
-        self.ws_sender.send(ServerboundMessage::Binary(binary).into()).map_err(|_| ConnectionClosedError)?;
-        debug!("[pub {}] set to {data_value} at time {timestamp:?}", self.id);
+        self.ws_sender
+            .send(ServerboundMessage::Binary(binary).into())
+            .map_err(|_| ConnectionClosedError)?;
+        debug!(
+            "[pub {}] set to {data_value} at time {timestamp:?}",
+            self.id
+        );
         Ok(())
     }
 }
@@ -307,7 +361,14 @@ impl UpdateProps {
     /// // everything else stays unchanged
     /// let builder = UpdateProps::with_props_delete(properties);
     /// ```
-    pub fn with_props_delete(Properties { persistent, retained, cached, extra }: Properties) -> Self {
+    pub fn with_props_delete(
+        Properties {
+            persistent,
+            retained,
+            cached,
+            extra,
+        }: Properties,
+    ) -> Self {
         let mut update = Self::new()
             .update_persistent(PropUpdate::from_option_delete(persistent))
             .update_retained(PropUpdate::from_option_delete(retained))
@@ -347,7 +408,14 @@ impl UpdateProps {
     /// // everything else stays unchanged
     /// let builder = UpdateProps::with_props_keep(properties);
     /// ```
-    pub fn with_props_keep(Properties { persistent, retained, cached, extra }: Properties) -> Self {
+    pub fn with_props_keep(
+        Properties {
+            persistent,
+            retained,
+            cached,
+            extra,
+        }: Properties,
+    ) -> Self {
         let mut update = Self::new()
             .update_persistent(PropUpdate::from_option_keep(persistent))
             .update_retained(PropUpdate::from_option_keep(retained))
@@ -370,7 +438,7 @@ impl UpdateProps {
     }
 
     /// Updates a property.
-    /// 
+    ///
     /// See also:
     /// - [`set`][`Self::set`]
     /// - [`delete`][`Self::delete`]
@@ -483,7 +551,6 @@ impl UpdateProps {
         bool => serde_json::Value::Bool(bool),
         serde_json::Value::Bool(value) => value);
 
-
     builder!("cached": [
         /// Gets the server-recognized `cached` property, checking whether it is a [`bool`] or
         /// not.
@@ -563,4 +630,3 @@ impl<T> PropUpdate<T> {
         }
     }
 }
-

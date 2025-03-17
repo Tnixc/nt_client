@@ -149,9 +149,10 @@ pub enum ReconnectError {
 impl From<ConnectError> for ReconnectError {
     fn from(value: ConnectError) -> Self {
         match value {
-            ConnectError::WebsocketError(tungstenite::Error::Io(error)) => Self::Fatal(error.into()),
+            ConnectError::WebsocketError(tungstenite::Error::Io(error)) => {
+                Self::Fatal(error.into())
+            }
             err => Self::Nonfatal(err.into()),
         }
     }
 }
-

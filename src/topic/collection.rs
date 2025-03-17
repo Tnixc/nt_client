@@ -4,7 +4,10 @@ use std::{fmt::Debug, sync::Arc};
 
 use tokio::sync::RwLock;
 
-use crate::{data::SubscriptionOptions, subscribe::Subscriber, NTClientSender, NTServerSender, NetworkTablesTime};
+use crate::{
+    data::SubscriptionOptions, subscribe::Subscriber, NTClientSender, NTServerSender,
+    NetworkTablesTime,
+};
 
 use super::{AnnouncedTopics, Topic};
 
@@ -65,7 +68,7 @@ impl PartialEq for TopicCollection {
     }
 }
 
-impl Eq for TopicCollection { }
+impl Eq for TopicCollection {}
 
 impl TopicCollection {
     pub(crate) fn new(
@@ -73,9 +76,15 @@ impl TopicCollection {
         time: Arc<RwLock<NetworkTablesTime>>,
         announced_topics: Arc<RwLock<AnnouncedTopics>>,
         send_ws: NTServerSender,
-        recv_ws: NTClientSender
+        recv_ws: NTClientSender,
     ) -> Self {
-        Self { names, time, announced_topics, send_ws, recv_ws }
+        Self {
+            names,
+            time,
+            announced_topics,
+            send_ws,
+            recv_ws,
+        }
     }
 
     /// Returns a slice of topic names this collection contains.
@@ -94,7 +103,14 @@ impl TopicCollection {
     ///
     /// [`Client`]: crate::Client
     pub async fn subscribe(&self, options: SubscriptionOptions) -> Subscriber {
-        Subscriber::new(self.names.clone(), options, self.announced_topics.clone(), self.send_ws.clone(), self.recv_ws.subscribe()).await
+        Subscriber::new(
+            self.names.clone(),
+            options,
+            self.announced_topics.clone(),
+            self.send_ws.clone(),
+            self.recv_ws.subscribe(),
+        )
+        .await
     }
 }
 
@@ -110,23 +126,22 @@ impl Iterator for IntoIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         let collection = &mut self.collection;
-        if collection.names.is_empty() { return None; };
+        if collection.names.is_empty() {
+            return None;
+        };
 
         Some(Topic::new(
-                collection.names.remove(0),
-                collection.time.clone(),
-                collection.announced_topics.clone(),
-                collection.send_ws.clone(),
-                collection.recv_ws.clone(),
+            collection.names.remove(0),
+            collection.time.clone(),
+            collection.announced_topics.clone(),
+            collection.send_ws.clone(),
+            collection.recv_ws.clone(),
         ))
     }
 }
 
 impl IntoIter {
     pub(self) fn new(collection: TopicCollection) -> Self {
-        IntoIter {
-            collection,
-        }
+        IntoIter { collection }
     }
 }
-

@@ -26,30 +26,57 @@
 //!         println!("topic updated: '{value}'")
 //!     }
 //! });
-//! 
+//!
 //! client.connect().await.unwrap();
 //! # });
 //! ```
-//! 
+//!
 //! [NetworkTables]: https://github.com/wpilibsuite/allwpilib/blob/main/ntcore/doc/networktables4.adoc
 
 use core::panic;
-use std::{collections::VecDeque, convert::Into, error::Error, fmt::Debug, net::Ipv4Addr, sync::Arc, time::{Duration, Instant}};
+use std::{
+    collections::VecDeque,
+    convert::Into,
+    error::Error,
+    fmt::Debug,
+    net::Ipv4Addr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use data::{BinaryData, ClientboundData, ClientboundTextData, PropertiesData, ServerboundMessage};
-use error::{ConnectError, ConnectionClosedError, IntoAddrError, PingError, ReceiveMessageError, ReconnectError, SendMessageError, UpdateTimeError};
-use futures_util::{stream::{SplitSink, SplitStream}, Future, SinkExt, StreamExt, TryStreamExt};
+use error::{
+    ConnectError, ConnectionClosedError, IntoAddrError, PingError, ReceiveMessageError,
+    ReconnectError, SendMessageError, UpdateTimeError,
+};
+use futures_util::{
+    stream::{SplitSink, SplitStream},
+    Future, SinkExt, StreamExt, TryStreamExt,
+};
 use time::ext::InstantExt;
-use tokio::{net::TcpStream, select, sync::{broadcast, mpsc, Notify, RwLock}, task::JoinHandle, time::{interval, timeout}};
-use tokio_tungstenite::{tungstenite::{self, http::{Response, Uri}, ClientRequestBuilder, Message}, MaybeTlsStream, WebSocketStream};
+use tokio::{
+    net::TcpStream,
+    select,
+    sync::{broadcast, mpsc, Notify, RwLock},
+    task::JoinHandle,
+    time::{interval, timeout},
+};
+use tokio_tungstenite::{
+    tungstenite::{
+        self,
+        http::{Response, Uri},
+        ClientRequestBuilder, Message,
+    },
+    MaybeTlsStream, WebSocketStream,
+};
 use topic::{collection::TopicCollection, AnnouncedTopics, Topic};
 use tracing::{debug, error, info};
 
-pub mod error;
 pub mod data;
-pub mod topic;
-pub mod subscribe;
+pub mod error;
 pub mod publish;
+pub mod subscribe;
+pub mod topic;
 
 pub(crate) type NTServerSender = broadcast::Sender<Arc<ServerboundMessage>>;
 pub(crate) type NTServerReceiver = broadcast::Receiver<Arc<ServerboundMessage>>;
@@ -118,12 +145,24 @@ impl Client {
 
     /// Returns a new topic with a given name.
     pub fn topic(&self, name: impl ToString) -> Topic {
-        Topic::new(name.to_string(), self.time(), self.announced_topics.clone(), self.send_ws.0.clone(), self.recv_ws.0.clone())
+        Topic::new(
+            name.to_string(),
+            self.time(),
+            self.announced_topics.clone(),
+            self.send_ws.0.clone(),
+            self.recv_ws.0.clone(),
+        )
     }
 
     /// Returns a new collection of topics with the given names.
     pub fn topics(&self, names: Vec<String>) -> TopicCollection {
-        TopicCollection::new(names, self.time(), self.announced_topics.clone(), self.send_ws.0.clone(), self.recv_ws.0.clone())
+        TopicCollection::new(
+            names,
+            self.time(),
+            self.announced_topics.clone(),
+            self.send_ws.0.clone(),
+            self.recv_ws.0.clone(),
+        )
     }
 
     /// Connects to the `NetworkTables` server.
@@ -133,7 +172,9 @@ impl Client {
         let (ws_stream, _) = if let Some(secure_port) = self.options.secure_port {
             match self.try_connect("wss", secure_port).await {
                 Ok(ok) => ok,
-                Err(tungstenite::Error::Io(_)) => self.try_connect("ws", self.options.unsecure_port).await?,
+                Err(tungstenite::Error::Io(_)) => {
+                    self.try_connect("ws", self.options.unsecure_port).await?
+                }
                 Err(err) => return Err(err.into()),
             }
         } else {
@@ -144,14 +185,30 @@ impl Client {
 
         let pong_notify_recv = Arc::new(Notify::new());
         let pong_notify_send = pong_notify_recv.clone();
-        let ping_task = Client::start_ping_task(pong_notify_recv, self.send_ws.0.clone(), self.options.ping_interval, self.options.response_timeout);
+        let ping_task = Client::start_ping_task(
+            pong_notify_recv,
+            self.send_ws.0.clone(),
+            self.options.ping_interval,
+            self.options.response_timeout,
+        );
 
         let (update_time_sender, update_time_recv) = mpsc::channel(1);
-        let update_time_task = Client::start_update_time_task(self.options.update_time_interval, self.time(), self.send_ws.0.clone(), update_time_recv);
+        let update_time_task = Client::start_update_time_task(
+            self.options.update_time_interval,
+            self.time(),
+            self.send_ws.0.clone(),
+            update_time_recv,
+        );
 
         let announced_topics = self.announced_topics();
         let write_task = Client::start_write_task(self.send_ws.1, write);
-        let read_task = Client::start_read_task(read, update_time_sender, pong_notify_send, announced_topics, self.recv_ws.0);
+        let read_task = Client::start_read_task(
+            read,
+            update_time_sender,
+            pong_notify_send,
+            announced_topics,
+            self.recv_ws.0,
+        );
 
         let result = select! {
             task = ping_task => task?.map_err(|err| err.into()),
@@ -167,16 +224,26 @@ impl Client {
         &self,
         scheme: &str,
         port: u16,
-    ) -> Result<(WebSocketStream<MaybeTlsStream<TcpStream>>, Response<Option<Vec<u8>>>), tungstenite::Error> {
-        let uri: Uri = format!("{scheme}://{}:{port}/nt/{}", self.addr, self.options.name).try_into().expect("valid websocket uri");
+    ) -> Result<
+        (
+            WebSocketStream<MaybeTlsStream<TcpStream>>,
+            Response<Option<Vec<u8>>>,
+        ),
+        tungstenite::Error,
+    > {
+        let uri: Uri = format!("{scheme}://{}:{port}/nt/{}", self.addr, self.options.name)
+            .try_into()
+            .expect("valid websocket uri");
         let conn_str = uri.to_string();
         debug!("attempting connection at {conn_str}");
-        let client_request = ClientRequestBuilder::new(uri)
-            .with_sub_protocol("v4.1.networktables.first.wpi.edu");
+        let client_request =
+            ClientRequestBuilder::new(uri).with_sub_protocol("v4.1.networktables.first.wpi.edu");
 
         let res = tokio_tungstenite::connect_async(client_request).await;
 
-        if res.is_ok() { info!("connected to server at {conn_str}") };
+        if res.is_ok() {
+            info!("connected to server at {conn_str}")
+        };
 
         res
     }
@@ -192,7 +259,9 @@ impl Client {
             interval.tick().await;
             loop {
                 interval.tick().await;
-                ws_sender.send(ServerboundMessage::Ping.into()).map_err(|_| ConnectionClosedError)?;
+                ws_sender
+                    .send(ServerboundMessage::Ping.into())
+                    .map_err(|_| ConnectionClosedError)?;
 
                 if (timeout(response_timeout, pong_recv.notified()).await).is_err() {
                     return Err(PingError::PongTimeout);
@@ -220,9 +289,14 @@ impl Client {
                 let data = BinaryData::new::<u64>(
                     -1,
                     Duration::ZERO,
-                    client_time.whole_microseconds().try_into().map_err(|_| UpdateTimeError::TimeOverflow)?,
+                    client_time
+                        .whole_microseconds()
+                        .try_into()
+                        .map_err(|_| UpdateTimeError::TimeOverflow)?,
                 );
-                ws_sender.send(ServerboundMessage::Binary(data).into()).map_err(|_| ConnectionClosedError)?;
+                ws_sender
+                    .send(ServerboundMessage::Binary(data).into())
+                    .map_err(|_| ConnectionClosedError)?;
 
                 if let Some((timestamp, client_send_time)) = time_recv.recv().await {
                     let offset = {
@@ -248,18 +322,26 @@ impl Client {
         tokio::spawn(async move {
             while let Ok(message) = server_recv.recv().await {
                 let packet = match &*message {
-                    ServerboundMessage::Text(json) => serde_json::to_string(&[json]).map_err(|err| err.into()).map(Message::Text),
-                    ServerboundMessage::Binary(binary) => rmp_serde::to_vec(binary).map_err(|err| err.into()).map(Message::Binary),
+                    ServerboundMessage::Text(json) => serde_json::to_string(&[json])
+                        .map_err(|err| err.into())
+                        .map(Message::Text),
+                    ServerboundMessage::Binary(binary) => rmp_serde::to_vec(binary)
+                        .map_err(|err| err.into())
+                        .map(Message::Binary),
                     ServerboundMessage::Ping => Ok(Message::Ping(Vec::new())),
                 };
                 match packet {
                     Ok(packet) => {
-                        if !matches!(packet, Message::Ping(_)) { debug!("sent message: {packet:?}"); };
-                        if (write.send(packet).await).is_err() { return Err(SendMessageError::ConnectionClosed(ConnectionClosedError)); };
-                    },
+                        if !matches!(packet, Message::Ping(_)) {
+                            debug!("sent message: {packet:?}");
+                        };
+                        if (write.send(packet).await).is_err() {
+                            return Err(SendMessageError::ConnectionClosed(ConnectionClosedError));
+                        };
+                    }
                     Err(err) => return Err(err),
                 };
-            };
+            }
             Ok(())
         })
     }
@@ -272,82 +354,118 @@ impl Client {
         client_sender: NTClientSender,
     ) -> JoinHandle<Result<(), ReceiveMessageError>> {
         tokio::spawn(async move {
-            read.err_into().try_for_each(|message| async {
-                let message = match message {
-                    Message::Binary(binary) => {
-                        let mut binary = VecDeque::from(binary);
-                        let mut binary_data = Vec::new();
-                        while !binary.is_empty() {
-                            let binary = rmp_serde::from_read::<&mut VecDeque<u8>, BinaryData>(&mut binary)?;
-                            if binary.id == -1 {
-                                let client_send_time = Duration::from_micros(binary.data.as_u64().expect("timestamp data is u64"));
-                                if update_time_sender.send((binary.timestamp, client_send_time)).await.is_err() {
-                                    return Err(ReceiveMessageError::ConnectionClosed(ConnectionClosedError));
-                                };
-                            }
-                            binary_data.push(ClientboundData::Binary(binary));
-                        };
-                        Some(binary_data)
-                    },
-                    Message::Text(json) => {
-                        Some(serde_json::from_str::<'_, Vec<ClientboundTextData>>(&json)?.into_iter().map(ClientboundData::Text).collect())
-                    },
-                    Message::Pong(_) => {
-                        pong_send.notify_one();
-                        None
-                    },
-                    Message::Close(_) => return Err(ReceiveMessageError::ConnectionClosed(ConnectionClosedError)),
-                    _ => None,
-                };
-
-                if let Some(data_frame) = message {
-                    debug!("received message(s): {data_frame:?}");
-                    for data in data_frame {
-                        match &data {
-                            ClientboundData::Text(ClientboundTextData::Announce(announce)) => {
-                                let mut announced_topics = announced_topics.write().await;
-                                announced_topics.insert(announce);
-                            },
-                            ClientboundData::Text(ClientboundTextData::Unannounce(unannounce)) => {
-                                let mut announced_topics = announced_topics.write().await;
-                                announced_topics.remove(unannounce);
-                            },
-                            ClientboundData::Text(ClientboundTextData::Properties(PropertiesData { name, update, .. })) => {
-                                let mut announced_topics = announced_topics.write().await;
-                                let Some(topic) = announced_topics.get_mut_from_name(name) else {
-                                    continue;
-                                };
-
-                                let properties = &mut topic.properties;
-                                for (key, value) in update {
-                                    match (key.as_ref(), value) {
-                                        ("persistent", Some(serde_json::Value::Bool(persistent))) => properties.persistent = Some(*persistent),
-                                        ("persistent", None) => properties.persistent = None,
-
-                                        ("retained", Some(serde_json::Value::Bool(retained))) => properties.retained = Some(*retained),
-                                        ("retained", None) => properties.retained = None,
-
-                                        ("cached", Some(serde_json::Value::Bool(cached))) => properties.cached = Some(*cached),
-                                        ("cached", None) => properties.cached = None,
-
-                                        (key, Some(value)) => {
-                                            properties.extra.insert(key.to_owned(), value.clone());
-                                        },
-                                        (key, None) => {
-                                            properties.extra.remove(key);
-                                        },
+            read.err_into()
+                .try_for_each(|message| async {
+                    let message = match message {
+                        Message::Binary(binary) => {
+                            let mut binary = VecDeque::from(binary);
+                            let mut binary_data = Vec::new();
+                            while !binary.is_empty() {
+                                let binary = rmp_serde::from_read::<&mut VecDeque<u8>, BinaryData>(
+                                    &mut binary,
+                                )?;
+                                if binary.id == -1 {
+                                    let client_send_time = Duration::from_micros(
+                                        binary.data.as_u64().expect("timestamp data is u64"),
+                                    );
+                                    if update_time_sender
+                                        .send((binary.timestamp, client_send_time))
+                                        .await
+                                        .is_err()
+                                    {
+                                        return Err(ReceiveMessageError::ConnectionClosed(
+                                            ConnectionClosedError,
+                                        ));
                                     };
                                 }
+                                binary_data.push(ClientboundData::Binary(binary));
                             }
-                            _ => {},
+                            Some(binary_data)
                         }
+                        Message::Text(json) => Some(
+                            serde_json::from_str::<'_, Vec<ClientboundTextData>>(&json)?
+                                .into_iter()
+                                .map(ClientboundData::Text)
+                                .collect(),
+                        ),
+                        Message::Pong(_) => {
+                            pong_send.notify_one();
+                            None
+                        }
+                        Message::Close(_) => {
+                            return Err(ReceiveMessageError::ConnectionClosed(
+                                ConnectionClosedError,
+                            ))
+                        }
+                        _ => None,
+                    };
 
-                        client_sender.send(data.into()).map_err(|_| ConnectionClosedError)?;
-                    }
-                };
+                    if let Some(data_frame) = message {
+                        debug!("received message(s): {data_frame:?}");
+                        for data in data_frame {
+                            match &data {
+                                ClientboundData::Text(ClientboundTextData::Announce(announce)) => {
+                                    let mut announced_topics = announced_topics.write().await;
+                                    announced_topics.insert(announce);
+                                }
+                                ClientboundData::Text(ClientboundTextData::Unannounce(
+                                    unannounce,
+                                )) => {
+                                    let mut announced_topics = announced_topics.write().await;
+                                    announced_topics.remove(unannounce);
+                                }
+                                ClientboundData::Text(ClientboundTextData::Properties(
+                                    PropertiesData { name, update, .. },
+                                )) => {
+                                    let mut announced_topics = announced_topics.write().await;
+                                    let Some(topic) = announced_topics.get_mut_from_name(name)
+                                    else {
+                                        continue;
+                                    };
 
-                Ok(())
-            }).await
+                                    let properties = &mut topic.properties;
+                                    for (key, value) in update {
+                                        match (key.as_ref(), value) {
+                                            (
+                                                "persistent",
+                                                Some(serde_json::Value::Bool(persistent)),
+                                            ) => properties.persistent = Some(*persistent),
+                                            ("persistent", None) => properties.persistent = None,
+
+                                            (
+                                                "retained",
+                                                Some(serde_json::Value::Bool(retained)),
+                                            ) => properties.retained = Some(*retained),
+                                            ("retained", None) => properties.retained = None,
+
+                                            ("cached", Some(serde_json::Value::Bool(cached))) => {
+                                                properties.cached = Some(*cached)
+                                            }
+                                            ("cached", None) => properties.cached = None,
+
+                                            (key, Some(value)) => {
+                                                properties
+                                                    .extra
+                                                    .insert(key.to_owned(), value.clone());
+                                            }
+                                            (key, None) => {
+                                                properties.extra.remove(key);
+                                            }
+                                        };
+                                    }
+                                }
+                                _ => {}
+                            }
+
+                            client_sender
+                                .send(data.into())
+                                .map_err(|_| ConnectionClosedError)?;
+                        }
+                    };
+
+                    Ok(())
+                })
+                .await
         })
     }
 }
@@ -356,7 +474,7 @@ impl Client {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NewClientOptions {
     /// The address to connect to.
-    /// 
+    ///
     /// Default is [`NTAddr::Local`].
     pub addr: NTAddr,
     /// The port of the server.
@@ -439,11 +557,18 @@ impl NTAddr {
     pub fn into_addr(self) -> Result<Ipv4Addr, IntoAddrError> {
         let addr = match self {
             NTAddr::TeamNumber(team_number) => {
-                if team_number > 25599 { return Err(IntoAddrError::InvalidTeamNumber(team_number)); };
+                if team_number > 25599 {
+                    return Err(IntoAddrError::InvalidTeamNumber(team_number));
+                };
                 let first_section = team_number / 100;
                 let last_two = team_number % 100;
-                Ipv4Addr::new(10, first_section.try_into().unwrap(), last_two.try_into().unwrap(), 2)
-            },
+                Ipv4Addr::new(
+                    10,
+                    first_section.try_into().unwrap(),
+                    last_two.try_into().unwrap(),
+                    2,
+                )
+            }
             NTAddr::Local => Ipv4Addr::LOCALHOST,
             NTAddr::Custom(addr) => addr,
         };
@@ -470,7 +595,10 @@ impl NetworkTablesTime {
     /// Creates a new `NetworkTablesTime` with the client start time of [`Instant::now`] and a
     /// server offset time of [`Duration::ZERO`].
     pub fn new() -> Self {
-        Self { started: Instant::now(), offset: time::Duration::ZERO }
+        Self {
+            started: Instant::now(),
+            offset: time::Duration::ZERO,
+        }
     }
 
     /// Returns the current client time.
@@ -530,7 +658,10 @@ impl NetworkTablesTime {
 /// }).await.unwrap();
 /// # })
 /// ```
-pub async fn reconnect<F, I>(options: NewClientOptions, mut init: I) -> Result<(), Box<dyn Error + Send + Sync>>
+pub async fn reconnect<F, I>(
+    options: NewClientOptions,
+    mut init: I,
+) -> Result<(), Box<dyn Error + Send + Sync>>
 where
     F: Future<Output = Result<(), ReconnectError>>,
     I: FnMut(Client) -> F,
@@ -541,26 +672,33 @@ where
             Err(ReconnectError::Fatal(err)) => {
                 error!("fatal error occurred: {err}");
                 return Err(err);
-            },
+            }
             Err(ReconnectError::Nonfatal(err)) => {
                 error!("client crashed! {err}");
                 info!("attempting to reconnect");
-            },
+            }
         }
     }
 }
 
-pub(crate) async fn recv_until<T, F>(recv_ws: &mut NTClientReceiver, mut filter: F) -> Result<T, broadcast::error::RecvError>
-where F: FnMut(Arc<ClientboundData>) -> Option<T>
+pub(crate) async fn recv_until<T, F>(
+    recv_ws: &mut NTClientReceiver,
+    mut filter: F,
+) -> Result<T, broadcast::error::RecvError>
+where
+    F: FnMut(Arc<ClientboundData>) -> Option<T>,
 {
     loop {
         if let Some(data) = filter(recv_ws.recv().await?) {
             return Ok(data);
         }
-    };
+    }
 }
 
-pub(crate) async fn recv_until_async<T, F, Fu>(recv_ws: &mut NTClientReceiver, mut filter: F) -> Result<T, broadcast::error::RecvError>
+pub(crate) async fn recv_until_async<T, F, Fu>(
+    recv_ws: &mut NTClientReceiver,
+    mut filter: F,
+) -> Result<T, broadcast::error::RecvError>
 where
     Fu: Future<Output = Option<T>>,
     F: FnMut(Arc<ClientboundData>) -> Fu,
@@ -569,6 +707,5 @@ where
         if let Some(data) = filter(recv_ws.recv().await?).await {
             return Ok(data);
         }
-    };
+    }
 }
-

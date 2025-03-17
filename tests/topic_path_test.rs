@@ -15,12 +15,18 @@ fn test_single_item() {
 #[test]
 fn test_multi_item() {
     assert_eq!(into_path("some/thing"), path!["some", "thing"]);
-    assert_eq!(into_path("Topic/thing/value"), path!["Topic", "thing", "value"]);
+    assert_eq!(
+        into_path("Topic/thing/value"),
+        path!["Topic", "thing", "value"]
+    );
 
     assert_eq!(into_path("/hello/there"), path!["hello", "there"]);
     assert_eq!(into_path("my/long/path/"), path!["my", "long", "path"]);
 
-    assert_eq!(into_path("//weird///path/and/slash//"), path!["/weird", "/", "path", "and", "slash"]);
+    assert_eq!(
+        into_path("//weird///path/and/slash//"),
+        path!["/weird", "/", "path", "and", "slash"]
+    );
     assert_eq!(into_path("//////"), path!["/", "/"]);
 }
 
@@ -39,4 +45,3 @@ fn test_parse_to_string() {
 fn into_path(s: &str) -> TopicPath {
     s.into()
 }
-
