@@ -119,7 +119,7 @@ macro_rules! transparent {
 }
 
 /// A data type understood by a `NetworkTables` server.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum DataType {
     /// [`bool`] data type.
@@ -169,6 +169,63 @@ pub enum DataType {
     /// [`Vec<String>`] data type.
     #[serde(rename = "string[]")]
     StringArray,
+    /// Catch-all for future or unknown data types.
+    #[serde(other)]
+    Unknown,
+}
+
+impl<'de> Deserialize<'de> for DataType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "lowercase")]
+        enum KnownDataType {
+            Boolean,
+            Double,
+            Int,
+            Float,
+            String,
+            Json,
+            Raw,
+            Rpc,
+            Msgpack,
+            Protobuf,
+            #[serde(rename = "boolean[]")]
+            BooleanArray,
+            #[serde(rename = "double[]")]
+            DoubleArray,
+            #[serde(rename = "int[]")]
+            IntArray,
+            #[serde(rename = "float[]")]
+            FloatArray,
+            #[serde(rename = "string[]")]
+            StringArray,
+        }
+
+        // This implementation handles unknown types by returning DataType::Unknown
+        Ok(match serde::Deserialize::deserialize(deserializer) {
+            Ok(known) => match known {
+                KnownDataType::Boolean => DataType::Boolean,
+                KnownDataType::Double => DataType::Double,
+                KnownDataType::Int => DataType::Int,
+                KnownDataType::Float => DataType::Float,
+                KnownDataType::String => DataType::String,
+                KnownDataType::Json => DataType::Json,
+                KnownDataType::Raw => DataType::Raw,
+                KnownDataType::Rpc => DataType::Rpc,
+                KnownDataType::Msgpack => DataType::Msgpack,
+                KnownDataType::Protobuf => DataType::Protobuf,
+                KnownDataType::BooleanArray => DataType::BooleanArray,
+                KnownDataType::DoubleArray => DataType::DoubleArray,
+                KnownDataType::IntArray => DataType::IntArray,
+                KnownDataType::FloatArray => DataType::FloatArray,
+                KnownDataType::StringArray => DataType::StringArray,
+            },
+            Err(_) => DataType::Unknown,
+        })
+    }
 }
 
 impl DataType {
@@ -217,6 +274,7 @@ impl DataType {
             D::IntArray => 18,
             D::FloatArray => 19,
             D::StringArray => 20,
+            D::Unknown => 255, // Use a high number for unknown types
         }
     }
 }
