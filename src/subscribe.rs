@@ -220,7 +220,7 @@ impl Subscriber {
                         // First update for this topic
                         latest_updates.insert(topic_id, message);
                     }
-                },
+                }
                 _ => other_messages.push_back(message),
             }
         }
@@ -243,7 +243,9 @@ impl Subscriber {
     }
 
     /// Internal helper method to process the next incoming message
-    async fn process_next_message(&mut self) -> Result<ReceivedMessage, broadcast::error::RecvError> {
+    async fn process_next_message(
+        &mut self,
+    ) -> Result<ReceivedMessage, broadcast::error::RecvError> {
         recv_until_async(&mut self.ws_recv, |data| {
             let topic_ids = self.topic_ids.clone();
             let announced_topics = self.announced_topics.clone();
