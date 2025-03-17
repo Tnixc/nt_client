@@ -25,7 +25,7 @@ async fn main() {
             })
             .await;
 
-        while let Ok(ReceivedMessage::Announced(topic)) = subscriber.recv().await {
+        while let Ok(ReceivedMessage::Announced(topic)) = subscriber.recv_latest().await {
             // turn the topic name into a TopicPath
             let path: TopicPath = topic.name().into();
             // print the last segment in the path

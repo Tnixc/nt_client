@@ -16,7 +16,7 @@ async fn main() {
             let mut subscriber = sub_topic.subscribe(Default::default()).await;
 
             loop {
-                match subscriber.recv().await {
+                match subscriber.recv_latest().await {
                     Ok(ReceivedMessage::Updated((topic, value))) => {
                         let value = String::from_value(&value).expect("updated value is a string");
                         println!("topic {} updated to {value}", topic.name());

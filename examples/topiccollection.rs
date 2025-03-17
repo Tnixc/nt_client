@@ -25,7 +25,7 @@ async fn main() {
         let mut sub = topics.subscribe(Default::default()).await;
 
         loop {
-            match sub.recv().await {
+            match sub.recv_latest().await {
                 Ok(ReceivedMessage::Updated((topic, value))) => {
                     println!("topic {} updated to {value:?}", topic.name())
                 }
