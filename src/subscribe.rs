@@ -1,4 +1,5 @@
 // nt_client/src/subscribe.rs
+
 //! Subscriber portion of the `NetworkTables` spec.
 //!
 //! Subscribers receive data value updates to a topic.
@@ -31,6 +32,37 @@
 //!                 eprintln!("got error: {err:?}");
 //!                 break;
 //!             },
+//!         }
+//!     }
+//! });
+//!
+//! client.connect().await.unwrap();
+//! # });
+//!
+//! // Example of adding topics to an existing subscription
+//! ```no_run
+//! use nt_client::{Client, subscribe::ReceivedMessage};
+//!
+//! # tokio_test::block_on(async {
+//! let client = Client::new(Default::default());
+//!
+//! let topic = client.topic("/initial/topic");
+//! tokio::spawn(async move {
+//!     let mut subscriber = topic.subscribe(Default::default()).await;
+//!
+//!     // Listen for updates on the initial topic
+//!     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+//!
+//!     // Add another topic to the subscription
+//!     subscriber.add_topic("/new/topic".to_string()).await;
+//!
+//!     // Now we'll receive updates for both topics
+//!     while let Ok(msg) = subscriber.recv_buffered().await {
+//!         match msg {
+//!             ReceivedMessage::Updated((topic, _)) => {
+//!                 println!("Received update for topic: {}", topic.name());
+//!             }
+//!             _ => {}
 //!         }
 //!     }
 //! });
@@ -158,6 +190,135 @@ impl Subscriber {
             }
         });
         join_all(mapped_futures).await.into_iter().collect()
+    }
+
+    /// Adds a new topic to this subscription.
+    ///
+    /// This allows dynamically expanding a subscription to include additional topics
+    /// while the client is connected.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use nt_client::{Client, subscribe::ReceivedMessage};
+    ///
+    /// # tokio_test::block_on(async {
+    /// let client = Client::new(Default::default());
+    ///
+    /// let topic = client.topic("/initial/topic");
+    /// tokio::spawn(async move {
+    ///     let mut subscriber = topic.subscribe(Default::default()).await;
+    ///
+    ///     // Listen for a while
+    ///     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    ///
+    ///     // Add another topic to the subscription
+    ///     subscriber.add_topic("/new/topic".to_string()).await;
+    ///
+    ///     // Now we'll receive updates for both topics
+    /// });
+    ///
+    /// client.connect().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn add_topic(
+        &mut self,
+        topic: String,
+    ) -> Result<(), broadcast::error::SendError<Arc<ServerboundMessage>>> {
+        debug!("[sub {}] adding topic `{}`", self.id, topic);
+
+        // Add to our local topics list
+        self.topics.push(topic.clone());
+
+        // Create a new subscription message for just this topic
+        let sub_message = ServerboundTextData::Subscribe(Subscribe {
+            topics: vec![topic],
+            subuid: self.id,
+            options: self.options.clone(),
+        });
+
+        // Send the subscription request
+        self.ws_sender
+            .send(ServerboundMessage::Text(sub_message).into())?;
+
+        // Update local topic IDs for any already-announced topics that match
+        {
+            let announced_topics = self.announced_topics.read().await;
+            let mut topic_ids = self.topic_ids.write().await;
+
+            // Find any announced topics that now match our subscription
+            for topic in announced_topics.id_values() {
+                if topic.matches(&self.topics, &self.options) && !topic_ids.contains(&topic.id()) {
+                    topic_ids.insert(topic.id());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Adds multiple topics to this subscription at once.
+    ///
+    /// This is a convenience method that calls `add_topic` for each topic in the provided list.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use nt_client::{Client, subscribe::ReceivedMessage};
+    ///
+    /// # tokio_test::block_on(async {
+    /// let client = Client::new(Default::default());
+    ///
+    /// let topic = client.topic("/initial/topic");
+    /// tokio::spawn(async move {
+    ///     let mut subscriber = topic.subscribe(Default::default()).await;
+    ///
+    ///     // Add multiple topics at once
+    ///     subscriber.add_topics(vec![
+    ///         "/new/topic1".to_string(),
+    ///         "/new/topic2".to_string(),
+    ///     ]).await.unwrap();
+    /// });
+    ///
+    /// client.connect().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn add_topics(
+        &mut self,
+        topics: Vec<String>,
+    ) -> Result<(), broadcast::error::SendError<Arc<ServerboundMessage>>> {
+        if topics.is_empty() {
+            return Ok(());
+        }
+
+        debug!("[sub {}] adding topics `{:?}`", self.id, topics);
+
+        // Add to our local topics list
+        self.topics.extend(topics.clone());
+
+        // Create a new subscription message for these topics
+        let sub_message = ServerboundTextData::Subscribe(Subscribe {
+            topics,
+            subuid: self.id,
+            options: self.options.clone(),
+        });
+
+        // Send the subscription request
+        self.ws_sender
+            .send(ServerboundMessage::Text(sub_message).into())?;
+
+        // Update local topic IDs for any already-announced topics that match
+        {
+            let announced_topics = self.announced_topics.read().await;
+            let mut topic_ids = self.topic_ids.write().await;
+
+            // Find any announced topics that now match our subscription
+            for topic in announced_topics.id_values() {
+                if topic.matches(&self.topics, &self.options) && !topic_ids.contains(&topic.id()) {
+                    topic_ids.insert(topic.id());
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Receives the next value for this subscriber, buffering all messages.

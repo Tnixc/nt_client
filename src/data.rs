@@ -9,7 +9,7 @@ pub mod r#type;
 
 // TODO: be able to send multiple messages at once
 #[derive(Debug)]
-pub(crate) enum ServerboundMessage {
+pub enum ServerboundMessage {
     Text(ServerboundTextData),
     Binary(BinaryData),
     Ping,
