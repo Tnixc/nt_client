@@ -320,7 +320,139 @@ impl Subscriber {
 
         Ok(())
     }
-
+    /// Removes a topic from this subscription.
+    ///
+    /// This allows dynamically reducing a subscription to exclude specific topics
+    /// while the client is connected.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use nt_client::{Client, subscribe::ReceivedMessage};
+    ///
+    /// # tokio_test::block_on(async {
+    /// let client = Client::new(Default::default());
+    ///
+    /// let topics = client.topics(vec![
+    ///     "/topic1".to_string(),
+    ///     "/topic2".to_string()
+    /// ]);
+    /// tokio::spawn(async move {
+    ///     let mut subscriber = topics.subscribe(Default::default()).await;
+    ///
+    ///     // Listen for both topics
+    ///     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    ///
+    ///     // Remove one topic from the subscription
+    ///     subscriber.remove_topic("/topic1".to_string()).await.unwrap();
+    ///
+    ///     // Now we'll only receive updates for /topic2
+    /// });
+    ///
+    /// client.connect().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn remove_topic(
+        &mut self,
+        topic: String,
+    ) -> Result<(), broadcast::error::SendError<Arc<ServerboundMessage>>> {
+        debug!("[sub {}] removing topic `{}`", self.id, topic);
+        if let Some(pos) = self.topics.iter().position(|t| t == &topic) {
+            self.topics.remove(pos);
+        }
+        let sub_message = ServerboundTextData::Subscribe(Subscribe {
+            topics: self.topics.clone(),
+            subuid: self.id,
+            options: self.options.clone(),
+        });
+        self.ws_sender
+            .send(ServerboundMessage::Text(sub_message).into())?;
+        {
+            let announced_topics = self.announced_topics.read().await;
+            let mut topic_ids = self.topic_ids.write().await;
+            let topics_to_remove: Vec<i32> = topic_ids
+                .iter()
+                .filter(|id| {
+                    if let Some(topic) = announced_topics.get_from_id(**id) {
+                        !topic.matches(&self.topics, &self.options)
+                    } else {
+                        false
+                    }
+                })
+                .copied()
+                .collect();
+            for id in topics_to_remove {
+                topic_ids.remove(&id);
+            }
+        }
+        Ok(())
+    }
+    /// Removes multiple topics from this subscription at once.
+    ///
+    /// This is a convenience method that calls `remove_topic` for each topic in the provided list.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use nt_client::{Client, subscribe::ReceivedMessage};
+    ///
+    /// # tokio_test::block_on(async {
+    /// let client = Client::new(Default::default());
+    ///
+    /// let topics = client.topics(vec![
+    ///     "/topic1".to_string(),
+    ///     "/topic2".to_string(),
+    ///     "/topic3".to_string()
+    /// ]);
+    /// tokio::spawn(async move {
+    ///     let mut subscriber = topics.subscribe(Default::default()).await;
+    ///
+    ///     // Remove multiple topics at once
+    ///     subscriber.remove_topics(vec![
+    ///         "/topic1".to_string(),
+    ///         "/topic2".to_string(),
+    ///     ]).await.unwrap();
+    ///
+    ///     // Now we'll only receive updates for /topic3
+    /// });
+    ///
+    /// client.connect().await.unwrap();
+    /// # });
+    /// ```
+    pub async fn remove_topics(
+        &mut self,
+        topics: Vec<String>,
+    ) -> Result<(), broadcast::error::SendError<Arc<ServerboundMessage>>> {
+        if topics.is_empty() {
+            return Ok(());
+        }
+        debug!("[sub {}] removing topics `{:?}`", self.id, topics);
+        self.topics.retain(|t| !topics.contains(t));
+        let sub_message = ServerboundTextData::Subscribe(Subscribe {
+            topics: self.topics.clone(),
+            subuid: self.id,
+            options: self.options.clone(),
+        });
+        self.ws_sender
+            .send(ServerboundMessage::Text(sub_message).into())?;
+        {
+            let announced_topics = self.announced_topics.read().await;
+            let mut topic_ids = self.topic_ids.write().await;
+            let topics_to_remove: Vec<i32> = topic_ids
+                .iter()
+                .filter(|id| {
+                    if let Some(topic) = announced_topics.get_from_id(**id) {
+                        !topic.matches(&self.topics, &self.options)
+                    } else {
+                        false
+                    }
+                })
+                .copied()
+                .collect();
+            for id in topics_to_remove {
+                topic_ids.remove(&id);
+            }
+        }
+        Ok(())
+    }
     /// Receives the next value for this subscriber, buffering all messages.
     ///
     /// This method ensures that no messages are dropped, buffering them internally
