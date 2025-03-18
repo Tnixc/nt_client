@@ -124,8 +124,8 @@ impl Client {
             time: Default::default(),
             announced_topics: Default::default(),
 
-            send_ws: broadcast::channel(10),
-            recv_ws: broadcast::channel(20),
+            send_ws: broadcast::channel(1024),
+            recv_ws: broadcast::channel(1024),
         }
     }
 
