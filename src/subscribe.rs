@@ -471,68 +471,94 @@ impl Subscriber {
         self.process_next_message().await
     }
 
-    /// Receives only the most recent updates for each topic, discarding older updates.
-    ///
-    /// Unlike `recv_buffered` which returns all messages in order, this method will:
-    ///
-    /// 1. Process all pending messages
-    /// 2. For each topic that has multiple value updates, keep ONLY the most recent one
-    /// 3. Preserve all non-update messages (like announcements and property changes)
-    /// 4. Return the first message in the resulting queue
-    ///
-    /// This is ideal for real-time applications where you only need the current value
-    /// of each topic and want to avoid processing outdated information.
+    /// Receives the next value for this subscriber. use recv_buffered if you want to ensure that no messages are dropped.
     ///
     /// Topics that have already been announced will not be received by this method. To view
     /// all topics that are being subscribed to, use the [`topics`][`Self::topics`] method.
-    pub async fn recv_latest(&mut self) -> Result<ReceivedMessage, broadcast::error::RecvError> {
-        // First, buffer any available messages
-        while let Ok(msg) = self.process_next_message().await {
-            self.buffered_messages.push_back(msg);
-        }
+    // TODO: probably replace with custom error type
+    pub async fn recv(&mut self) -> Result<ReceivedMessage, broadcast::error::RecvError> {
+        recv_until_async(&mut self.ws_recv, |data| {
+            let topic_ids = self.topic_ids.clone();
+            let announced_topics = self.announced_topics.clone();
+            let sub_id = self.id;
+            let topics = &self.topics;
+            let options = &self.options;
+            async move {
+                match *data {
+                    ClientboundData::Binary(BinaryData {
+                        id,
+                        ref timestamp,
+                        ref data,
+                        ..
+                    }) => {
+                        let contains = { topic_ids.read().await.contains(&id) };
+                        if !contains {
+                            return None;
+                        };
+                        let announced_topic = {
+                            let mut topics = announced_topics.write().await;
+                            let topic = topics
+                                .get_mut_from_id(id)
+                                .expect("announced topic before sending updates");
 
-        // If we have multiple updates for the same topic, keep only the latest
-        let mut latest_updates: HashMap<i32, ReceivedMessage> = HashMap::new();
-        let mut other_messages = VecDeque::new();
+                            if topic
+                                .last_updated()
+                                .is_some_and(|last_timestamp| last_timestamp > timestamp)
+                            {
+                                return None;
+                            };
+                            topic.update(*timestamp);
 
-        for message in self.buffered_messages.drain(..) {
-            match &message {
-                ReceivedMessage::Updated((topic, _)) => {
-                    // Store the topic ID with the whole message
-                    let topic_id = topic.id();
-
-                    // If this topic already has an update, check if this one is newer
-                    if let Some(existing) = latest_updates.get(&topic_id) {
-                        if let ReceivedMessage::Updated((existing_topic, _)) = existing {
-                            // Only replace if this update is newer
-                            if topic.last_updated() > existing_topic.last_updated() {
-                                latest_updates.insert(topic_id, message);
-                            }
+                            topic.clone()
+                        };
+                        debug!("[sub {}] updated: {data}", sub_id);
+                        Some(ReceivedMessage::Updated((announced_topic, data.clone())))
+                    }
+                    ClientboundData::Text(ClientboundTextData::Announce(ref announce)) => {
+                        let matches = announced_topics
+                            .read()
+                            .await
+                            .get_from_id(announce.id)
+                            .is_some_and(|topic| topic.matches(topics, options));
+                        if matches {
+                            topic_ids.write().await.insert(announce.id);
+                            Some(ReceivedMessage::Announced(announce.into()))
+                        } else {
+                            None
                         }
-                    } else {
-                        // First update for this topic
-                        latest_updates.insert(topic_id, message);
+                    }
+                    ClientboundData::Text(ClientboundTextData::Unannounce(ref unannounce)) => {
+                        topic_ids.write().await.remove(&unannounce.id).then(|| {
+                            ReceivedMessage::Unannounced {
+                                name: unannounce.name.clone(),
+                                id: unannounce.id,
+                            }
+                        })
+                    }
+                    ClientboundData::Text(ClientboundTextData::Properties(PropertiesData {
+                        ref name,
+                        ..
+                    })) => {
+                        let (contains, id) = {
+                            let id = announced_topics
+                                .read()
+                                .await
+                                .get_id(name)
+                                .expect("announced before properties");
+                            (topic_ids.read().await.contains(&id), id)
+                        };
+                        if !contains {
+                            return None;
+                        };
+
+                        let topics = announced_topics.read().await;
+                        let topic = topics.get_from_id(id).expect("topic exists").clone();
+                        Some(ReceivedMessage::UpdateProperties(topic))
                     }
                 }
-                _ => other_messages.push_back(message),
             }
-        }
-
-        // Re-add all non-update messages
-        self.buffered_messages = other_messages;
-
-        // Add all latest updates back to the queue
-        for (_, message) in latest_updates {
-            self.buffered_messages.push_back(message);
-        }
-
-        // Return the next message, if any
-        if let Some(message) = self.buffered_messages.pop_front() {
-            Ok(message)
-        } else {
-            // If no messages in buffer, get the next one
-            self.process_next_message().await
-        }
+        })
+        .await
     }
 
     /// Internal helper method to process the next incoming message

@@ -27,7 +27,7 @@ async fn main() {
         let mut subscriber = sub_topic.subscribe(Default::default()).await;
 
         loop {
-            match subscriber.recv_latest().await {
+            match subscriber.recv().await {
                 Ok(ReceivedMessage::Announced(topic)) => {
                     println!("announced topic: {}", topic.name())
                 }
