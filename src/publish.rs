@@ -15,11 +15,11 @@
 //! let counter_topic = client.topic("/counter");
 //! tokio::spawn(async move {
 //!     const INCREMENT_INTERVAL: Duration = Duration::from_secs(5);
-//!     
+//!
 //!     let mut publisher = counter_topic.publish::<u32>(Default::default()).await.unwrap();
 //!     let mut interval = tokio::time::interval(INCREMENT_INTERVAL);
 //!     let mut counter = 0;
-//!     
+//!
 //!     loop {
 //!         interval.tick().await;
 //!
@@ -43,7 +43,7 @@ use crate::{
         Publish, ServerboundMessage, ServerboundTextData, SetProperties, Unpublish,
     },
     error::ConnectionClosedError,
-    recv_until, NTClientReceiver, NTServerSender, NetworkTablesTime,
+    recv_until, Client, NTClientReceiver, NTServerSender, NetworkTablesTime,
 };
 
 /// A `NetworkTables` publisher that publishes values to a [`Topic`].
@@ -628,5 +628,75 @@ impl<T> PropUpdate<T> {
             Some(t) => Self::Set(t),
             None => Self::Keep,
         }
+    }
+}
+
+/// A generic `NetworkTables` publisher that can publish values of any type to any topic.
+///
+/// Unlike the typed `Publisher<T>`, this publisher can send different data types to different topics
+/// without being constrained to a single type.
+pub struct GenericPublisher {
+    time: Arc<RwLock<NetworkTablesTime>>,
+    ws_sender: NTServerSender,
+}
+
+impl Debug for GenericPublisher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GenericPublisher").finish()
+    }
+}
+
+impl GenericPublisher {
+    /// Creates a new `GenericPublisher`
+    pub(crate) fn new(time: Arc<RwLock<NetworkTablesTime>>, ws_sender: NTServerSender) -> Self {
+        Self { time, ws_sender }
+    }
+
+    /// Publishes a value of any type to any topic.
+    ///
+    /// This method allows publishing to any topic with any data type that implements
+    /// `NetworkTableData`, without being constrained to a specific type.
+    pub async fn set<K: AsRef<str>, V: NetworkTableData>(
+        &self,
+        topic_key: K,
+        value: V,
+    ) -> Result<(), ConnectionClosedError> {
+        let topic_str = topic_key.as_ref().to_string();
+        debug!(
+            "GenericPublisher: publishing to topic `{}` with type {:?}",
+            topic_str,
+            V::data_type()
+        );
+
+        // Create a random ID for this publication
+        let temp_id = rand::random::<i32>();
+
+        // Publish message for the temporary topic
+        let pub_message = ServerboundTextData::Publish(Publish {
+            name: topic_str.clone(),
+            pubuid: temp_id,
+            r#type: V::data_type(), // Use the correct data type for this value
+            properties: Properties::default(),
+        });
+
+        self.ws_sender
+            .send(ServerboundMessage::Text(pub_message).into())
+            .map_err(|_| ConnectionClosedError)?;
+
+        // Get server time
+        let time = self.time.read().await;
+        let timestamp = time.server_time();
+
+        // Create and send the value - we need to convert the value properly
+        let binary = BinaryData::new(temp_id, timestamp, value);
+        self.ws_sender
+            .send(ServerboundMessage::Binary(binary).into())
+            .map_err(|_| ConnectionClosedError)?;
+
+        debug!(
+            "GenericPublisher: successfully published to `{}`",
+            topic_str
+        );
+        Ok(())
     }
 }

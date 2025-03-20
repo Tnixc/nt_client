@@ -53,6 +53,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
     Future, SinkExt, StreamExt, TryStreamExt,
 };
+use publish::GenericPublisher;
 use time::ext::InstantExt;
 use tokio::{
     net::TcpStream,
@@ -467,6 +468,32 @@ impl Client {
                 })
                 .await
         })
+    }
+    /// Creates a generic publisher that can publish values of any type to any topic.
+    ///
+    /// Unlike the typed publisher created with `topic().publish::<T>()`, this publisher
+    /// can send different data types to different topics without being constrained to a single type.
+    ///
+    /// # Examples
+    /// ```no_run
+    /// use nt_client::Client;
+    ///
+    /// # tokio_test::block_on(async {
+    /// let client = Client::new(Default::default());
+    ///
+    /// let publisher = client.generic_publisher();
+    /// tokio::spawn(async move {
+    ///     // Publish different types to different topics
+    ///     publisher.set("/temperature", 72.5f64).await.unwrap();
+    ///     publisher.set("/status", "online".to_string()).await.unwrap();
+    ///     publisher.set("/active", true).await.unwrap();
+    /// });
+    ///
+    /// client.connect().await.unwrap();
+    /// # });
+    /// ```
+    pub fn generic_publisher(&self) -> GenericPublisher {
+        GenericPublisher::new(self.time(), self.send_ws.0.clone())
     }
 }
 
