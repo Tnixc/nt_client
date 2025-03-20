@@ -31,6 +31,14 @@ async fn main() {
             if let Err(e) = gpub.set("/counter", counter).await {
                 eprintln!("Failed to publish: {e}");
             }
+
+            // existing topic
+            if let Err(e) = gpub
+                .set("/Shuffleboard/RobotContainer/testBool", counter % 2 == 0)
+                .await
+            {
+                eprintln!("Failed to publish: {e}");
+            }
         }
     });
 
